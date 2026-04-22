@@ -11,6 +11,21 @@ from reportlab.lib.units import mm
 
 st.set_page_config(page_title="SOP Builder", layout="wide")
 
+# ─── Sidebar API Key ──────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("🔑 API Configuration")
+    api_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        placeholder="sk-...",
+        value=st.session_state.get("openai_api_key", ""),
+    )
+    if api_key:
+        st.session_state.openai_api_key = api_key
+        st.success("API key saved ✓")
+    else:
+        st.warning("Enter your OpenAI API key to use AI generation.")
+
 # ─── Session State ────────────────────────────────────────────────────────────
 defaults = {
     "steps": [],
@@ -29,7 +44,7 @@ defaults = {
     "company_name": "PINNACLE MOBILITY",
     "composed_by": "Agilomatrix Pvt Ltd (connectus@agilomatrix.com)",
     "ai_description": "",
-    "ai_mode": "AI Generate",   # "AI Generate" | "Manual"
+    "ai_mode": "AI Generate",
     "openai_api_key": "",
     "change_records": [
         {"sno": "1", "date": "17-12-2024", "rev": "0.0", "desc": "Original Version",
@@ -86,7 +101,6 @@ EXAMPLES = [
 
 # ─── AI Generator ─────────────────────────────────────────────────────────────
 def generate_steps_with_ai(description: str):
-    """Call OpenAI API and parse JSON steps."""
     api_key = st.session_state.get("openai_api_key", "").strip()
     if not api_key:
         st.error("⚠️ OpenAI API key not found. Please enter your API key in the sidebar.")
@@ -103,12 +117,10 @@ def generate_steps_with_ai(description: str):
         temperature=0.2,
     )
     raw = response.choices[0].message.content.strip()
-    # Strip any accidental markdown fences
     raw = raw.replace("```json", "").replace("```", "").strip()
     parsed = json.loads(raw)
     if not isinstance(parsed, list):
         raise ValueError("AI returned non-list JSON")
-    # Normalise every step (fill missing keys with defaults)
     for step in parsed:
         step.setdefault("input_label", "")
         step.setdefault("output_label", "")
@@ -123,15 +135,8 @@ def generate_steps_with_ai(description: str):
         step.setdefault("loop_to", None)
         step.setdefault("loop_label", "")
         step.setdefault("column", "left")
-        # Convert None connect_from / loop_to to empty string for compatibility
-        if step["connect_from"] is not None:
-            step["connect_from"] = str(step["connect_from"])
-        else:
-            step["connect_from"] = ""
-        if step["loop_to"] is not None:
-            step["loop_to"] = str(step["loop_to"])
-        else:
-            step["loop_to"] = ""
+        step["connect_from"] = str(step["connect_from"]) if step["connect_from"] is not None else ""
+        step["loop_to"]      = str(step["loop_to"])      if step["loop_to"]      is not None else ""
     return parsed
 
 # ─── SVG Preview ──────────────────────────────────────────────────────────────
@@ -202,10 +207,10 @@ def generate_svg_preview(steps):
         return out
     def arrowhead_d(tx, ty, direction="down"):
         sz = 5
-        if direction == "down":  return f"M{tx},{ty} L{tx-sz},{ty-sz*1.5} L{tx+sz},{ty-sz*1.5} Z"
+        if direction == "down":   return f"M{tx},{ty} L{tx-sz},{ty-sz*1.5} L{tx+sz},{ty-sz*1.5} Z"
         elif direction == "right": return f"M{tx},{ty} L{tx-sz*1.5},{ty-sz} L{tx-sz*1.5},{ty+sz} Z"
         elif direction == "left":  return f"M{tx},{ty} L{tx+sz*1.5},{ty-sz} L{tx+sz*1.5},{ty+sz} Z"
-        else: return f"M{tx},{ty} L{tx-sz},{ty+sz*1.5} L{tx+sz},{ty+sz*1.5} Z"
+        else:                      return f"M{tx},{ty} L{tx-sz},{ty+sz*1.5} L{tx+sz},{ty+sz*1.5} Z"
 
     ARROW_COLOR = "#4a5568"; YES_COLOR = "#276749"; NO_COLOR = "#c53030"
     arrow_svg = ""
@@ -273,7 +278,7 @@ def generate_svg_preview(steps):
         a=anchors[idx]; shape=step["shape"]; cx,cy=a["cx"],a["cy"]
         bw,bh=a["bw"],a["bh"]; x0=cx-bw/2; y0=a["top"]
         clr=COLORS.get(shape,COLORS["rect"]); lines=wrap_label(step["text"])
-        shape_svg += f'<g>'
+        shape_svg += '<g>'
         if shape=="rect":
             shape_svg += f'<rect x="{x0}" y="{y0}" width="{bw}" height="{bh}" rx="8" fill="{clr["fill"]}" stroke="{clr["stroke"]}" stroke-width="1.5"/>'
             shape_svg += text_lines_svg(lines, cx, cy, 11, fill=clr["text"])
@@ -374,7 +379,7 @@ def render_preview_html(steps):
     document.getElementById('zoom-label').textContent='100%';}}
 </script></body></html>"""
 
-# ─── PDF Helpers (unchanged) ──────────────────────────────────────────────────
+# ─── PDF Helpers ──────────────────────────────────────────────────────────────
 def wrapped_lines(c, text, max_w, font_name, font_size):
     words=str(text).split(); lines=[]; cur=""
     for w in words:
@@ -400,10 +405,14 @@ def draw_left_text(c, text, x, cy, max_w, font_name="Helvetica", font_size=6.5, 
 
 def arrowhead(c, tip_x, tip_y, direction="down"):
     size=3.5; c.setFillColor(colors.black); p=c.beginPath()
-    if direction=="down": p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size,tip_y+size*1.5); p.lineTo(tip_x+size,tip_y+size*1.5)
-    elif direction=="up": p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size,tip_y-size*1.5); p.lineTo(tip_x+size,tip_y-size*1.5)
-    elif direction=="right": p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size*1.5,tip_y+size); p.lineTo(tip_x-size*1.5,tip_y-size)
-    elif direction=="left": p.moveTo(tip_x,tip_y); p.lineTo(tip_x+size*1.5,tip_y+size); p.lineTo(tip_x+size*1.5,tip_y-size)
+    if direction=="down":
+        p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size,tip_y+size*1.5); p.lineTo(tip_x+size,tip_y+size*1.5)
+    elif direction=="up":
+        p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size,tip_y-size*1.5); p.lineTo(tip_x+size,tip_y-size*1.5)
+    elif direction=="right":
+        p.moveTo(tip_x,tip_y); p.lineTo(tip_x-size*1.5,tip_y+size); p.lineTo(tip_x-size*1.5,tip_y-size)
+    elif direction=="left":
+        p.moveTo(tip_x,tip_y); p.lineTo(tip_x+size*1.5,tip_y+size); p.lineTo(tip_x+size*1.5,tip_y-size)
     p.close(); c.drawPath(p, fill=1, stroke=0)
 
 def draw_arrow_down(c, x, y_from, y_to, color=colors.black):
@@ -414,7 +423,7 @@ def draw_elbow_arrow(c, sx, sy, ex, ey, color=colors.black, label="", label_colo
     c.setStrokeColor(color); c.setLineWidth(0.8); size=3.5
     c.line(sx, sy, ex, sy)
     if ey<sy: c.line(ex, sy, ex, ey+size*1.5); arrowhead(c, ex, ey, "down")
-    else: c.line(ex, sy, ex, ey-size*1.5); arrowhead(c, ex, ey, "up")
+    else:     c.line(ex, sy, ex, ey-size*1.5); arrowhead(c, ex, ey, "up")
     if label:
         c.setFont("Helvetica-Bold",6); c.setFillColor(label_color)
         c.drawCentredString((sx+ex)/2, sy+2.5, label)
@@ -422,23 +431,27 @@ def draw_elbow_arrow(c, sx, sy, ex, ey, color=colors.black, label="", label_colo
 
 def draw_rect_shape(c, x, y, w, h, text, font_size=7):
     c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.8)
-    c.rect(x, y, w, h, fill=1, stroke=1); draw_centered_text(c, text, x+w/2, y+h/2, w-4, font_size=font_size)
+    c.rect(x, y, w, h, fill=1, stroke=1)
+    draw_centered_text(c, text, x+w/2, y+h/2, w-4, font_size=font_size)
 
 def draw_oval_shape(c, x, y, w, h, text, font_size=7):
     c.setStrokeColor(colors.black); c.setFillColor(colors.HexColor("#2c2c2c")); c.setLineWidth(0.8)
-    c.ellipse(x, y, x+w, y+h, fill=1, stroke=1); draw_centered_text(c, text, x+w/2, y+h/2, w-6, font_size=font_size, color=colors.white)
+    c.ellipse(x, y, x+w, y+h, fill=1, stroke=1)
+    draw_centered_text(c, text, x+w/2, y+h/2, w-6, font_size=font_size, color=colors.white)
 
 def draw_diamond_shape(c, x, y, w, h, text, font_size=6.5):
     cx,cy=x+w/2,y+h/2; p=c.beginPath()
     p.moveTo(cx,y+h); p.lineTo(x+w,cy); p.lineTo(cx,y); p.lineTo(x,cy); p.close()
     c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.8)
-    c.drawPath(p, fill=1, stroke=1); draw_centered_text(c, text, cx, cy, w*0.55, font_size=font_size)
+    c.drawPath(p, fill=1, stroke=1)
+    draw_centered_text(c, text, cx, cy, w*0.55, font_size=font_size)
 
 def draw_parallelogram_shape(c, x, y, w, h, text, font_size=7):
     skew=7; p=c.beginPath()
     p.moveTo(x+skew,y+h); p.lineTo(x+w,y+h); p.lineTo(x+w-skew,y); p.lineTo(x,y); p.close()
     c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.8)
-    c.drawPath(p, fill=1, stroke=1); draw_centered_text(c, text, x+w/2, y+h/2, w-10, font_size=font_size)
+    c.drawPath(p, fill=1, stroke=1)
+    draw_centered_text(c, text, x+w/2, y+h/2, w-10, font_size=font_size)
 
 def draw_table_structure(c, XS, FLOW_COL_IDX, table_top, table_bottom, row_bottoms):
     ML_x=XS[0]; total_w=XS[-1]-XS[0]; total_h=table_top-table_bottom
@@ -450,8 +463,8 @@ def draw_table_structure(c, XS, FLOW_COL_IDX, table_top, table_bottom, row_botto
     c.setLineWidth(0.4)
     for row_bottom in row_bottoms[:-1]:
         y=row_bottom
-        if FLOW_COL_IDX>0: c.line(XS[0], y, XS[FLOW_COL_IDX], y)
-        if FLOW_COL_IDX<len(XS)-2: c.line(XS[FLOW_COL_IDX+1], y, XS[-1], y)
+        if FLOW_COL_IDX>0:          c.line(XS[0], y, XS[FLOW_COL_IDX], y)
+        if FLOW_COL_IDX<len(XS)-2:  c.line(XS[FLOW_COL_IDX+1], y, XS[-1], y)
 
 def generate_pdf(steps, meta):
     buf=io.BytesIO(); PW,PH=landscape(A4); c=canvas.Canvas(buf, pagesize=(PW,PH))
@@ -464,7 +477,7 @@ def generate_pdf(steps, meta):
     cx_title=ML+left_w+centre_w/2
     c.setFont("Helvetica-Bold",13); c.drawCentredString(cx_title, cur_y-7, "STANDARD OPERATING PROCEDURE")
     c.setFont("Helvetica",8.5); draw_centered_text(c, meta["title"], cx_title, cur_y-18, centre_w-4, font_size=8.5)
-    RX=ML+left_w+centre_w; c1w,c2w,c3w=18*mm,24*mm,12*mm; c4w=right_w-c1w-c2w-c3w; rh=HEADER_H/4
+    RX=ML+left_w+centre_w; c1w,c2w,c3w=18*mm,24*mm,12*mm; rh=HEADER_H/4
     meta_rows=[("SOP No.",meta["sop_no"],"Page",meta["page_info"]),
                ("Rev No.",meta["rev_no"],"Date",meta["date"]),
                ("Unit",meta["unit"],"Area",meta["area"]),
@@ -481,8 +494,9 @@ def generate_pdf(steps, meta):
     c.setLineWidth(1); c.line(ML, cur_y-HEADER_H, ML+TW, cur_y-HEADER_H); cur_y-=HEADER_H
     PS_H=8*mm; PL_W,PV_W,SL_W=18*mm,82*mm,14*mm; SV_W=TW-PL_W-PV_W-SL_W
     c.setLineWidth(0.6)
-    for x,w,txt,bold,centre in [(ML,PL_W,"Purpose",True,False),(ML+PL_W,PV_W,meta["purpose"],False,False),
-                                  (ML+PL_W+PV_W,SL_W,"Scope",True,False),(ML+PL_W+PV_W+SL_W,SV_W,meta["scope"],False,True)]:
+    for x,w,txt,bold,centre in [
+        (ML,PL_W,"Purpose",True,False),(ML+PL_W,PV_W,meta["purpose"],False,False),
+        (ML+PL_W+PV_W,SL_W,"Scope",True,False),(ML+PL_W+PV_W+SL_W,SV_W,meta["scope"],False,True)]:
         c.setFillColor(colors.white); c.rect(x,cur_y-PS_H,w,PS_H,fill=1,stroke=1); c.setFillColor(colors.black)
         if bold: c.setFont("Helvetica-Bold",8); c.drawString(x+2, cur_y-PS_H+2.5, txt)
         elif centre: draw_centered_text(c, txt, x+w/2, cur_y-PS_H/2, w-4, font_size=6.5)
@@ -492,7 +506,7 @@ def generate_pdf(steps, meta):
     COL_FLOW=TW-COL_IN-COL_OUT-COL_RESP-COL_DOC-COL_MEAS; FLOW_COL_IDX=1
     XS=[ML,ML+COL_IN,ML+COL_IN+COL_FLOW,ML+COL_IN+COL_FLOW+COL_OUT,
         ML+COL_IN+COL_FLOW+COL_OUT+COL_RESP,ML+COL_IN+COL_FLOW+COL_OUT+COL_RESP+COL_DOC,ML+TW]
-    FLOW_L=XS[1]; FLOW_R=XS[2]; SH_W_L=COL_FLOW*0.44-2*mm; SH_W_R=COL_FLOW*0.44-2*mm
+    FLOW_L=XS[1]; SH_W_L=COL_FLOW*0.44-2*mm; SH_W_R=COL_FLOW*0.44-2*mm
     LEFT_CX=FLOW_L+COL_FLOW*0.25; RIGHT_CX=FLOW_L+COL_FLOW*0.75
     HDR1_H=7*mm; c.setFillColor(colors.HexColor("#DDEEFF"))
     c.rect(ML,cur_y-HDR1_H,TW,HDR1_H,fill=1,stroke=1)
@@ -505,7 +519,8 @@ def generate_pdf(steps, meta):
         cw=XS[i+1]-XS[i]; c.setFillColor(colors.HexColor("#EEF3FF"))
         c.rect(XS[i],cur_y-HDR2_H,cw,HDR2_H,fill=1,stroke=1); c.setFillColor(colors.black)
         lines=label.split("\n"); lh=6.5; sy=cur_y-HDR2_H/2+(len(lines)-1)*lh/2
-        for li,ln in enumerate(lines): c.setFont("Helvetica-Bold",6.5); c.drawCentredString(XS[i]+cw/2, sy-li*(lh+0.5), ln)
+        for li,ln in enumerate(lines):
+            c.setFont("Helvetica-Bold",6.5); c.drawCentredString(XS[i]+cw/2, sy-li*(lh+0.5), ln)
     cur_y-=HDR2_H
     SHAPE_H={"rect":9*mm,"oval":9*mm,"parallelogram":9*mm,"diamond":15*mm,"arrow_text":6*mm}
     V_PAD=5*mm; table_top=cur_y
@@ -517,12 +532,14 @@ def generate_pdf(steps, meta):
             for pi in range(len(paired_rows)-1,-1,-1):
                 if paired_rows[pi]["right"] is None:
                     paired_rows[pi]["right"]=idx; step_to_pair[idx]=pi; paired=True; break
-            if not paired: paired_rows.append({"left":None,"right":idx}); step_to_pair[idx]=len(paired_rows)-1
-        else: paired_rows.append({"left":idx,"right":None}); step_to_pair[idx]=len(paired_rows)-1
+            if not paired:
+                paired_rows.append({"left":None,"right":idx}); step_to_pair[idx]=len(paired_rows)-1
+        else:
+            paired_rows.append({"left":idx,"right":None}); step_to_pair[idx]=len(paired_rows)-1
     row_geom=[]; scan_y=cur_y
     for pair in paired_rows:
-        h_left=SHAPE_H.get(steps[pair["left"]]["shape"],9*mm) if pair["left"] is not None else 0
-        h_right=SHAPE_H.get(steps[pair["right"]]["shape"],9*mm) if pair["right"] is not None else 0
+        h_left =SHAPE_H.get(steps[pair["left"]]["shape"],  9*mm) if pair["left"]  is not None else 0
+        h_right=SHAPE_H.get(steps[pair["right"]]["shape"], 9*mm) if pair["right"] is not None else 0
         ROW_H=max(h_left,h_right)+2*V_PAD; ry=scan_y-ROW_H
         row_geom.append({"ry":ry,"ROW_H":ROW_H}); scan_y=ry
     table_bottom=scan_y
@@ -590,8 +607,8 @@ def generate_pdf(steps, meta):
                 c.setStrokeColor(colors.black)
     for idx,step in enumerate(steps):
         a=anchors[idx]; sh_x,sh_bot=a["sh_x"],a["sh_bot"]; sh_w,sh_h=a["sh_w"],a["sh_h"]; shape=step["shape"]
-        if shape=="rect": draw_rect_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
-        elif shape=="oval": draw_oval_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
+        if shape=="rect":         draw_rect_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
+        elif shape=="oval":       draw_oval_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
         elif shape=="diamond":
             draw_diamond_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
             yes_lbl=step.get("yes_label","YES") or "YES"; no_lbl=step.get("no_label","NO") or "NO"
@@ -603,8 +620,7 @@ def generate_pdf(steps, meta):
         elif shape=="arrow_text":
             c.setFont("Helvetica-Oblique",7); c.setFillColor(colors.HexColor("#333333"))
             c.drawCentredString(a["cx"], a["cy"], step["text"]); c.setFillColor(colors.black)
-    cur_y=table_bottom
-    cur_y-=4*mm; CR_TITLE_H=6*mm
+    cur_y=table_bottom; cur_y-=4*mm; CR_TITLE_H=6*mm
     c.setFillColor(colors.HexColor("#DDEEFF")); c.rect(ML,cur_y-CR_TITLE_H,TW,CR_TITLE_H,fill=1,stroke=1)
     c.setFont("Helvetica-Bold",8); c.setFillColor(colors.black)
     c.drawCentredString(ML+TW/2, cur_y-CR_TITLE_H+2, "SOP Change Record"); cur_y-=CR_TITLE_H
@@ -618,7 +634,8 @@ def generate_pdf(steps, meta):
         cw=CR_XS[i+1]-CR_XS[i]; c.setFillColor(colors.HexColor("#EEF3FF"))
         c.rect(CR_XS[i],cur_y-CR_HDR_H,cw,CR_HDR_H,fill=1,stroke=1); c.setFillColor(colors.black)
         lines=label.split("\n"); lh=6; sy=cur_y-CR_HDR_H/2+(len(lines)-1)*lh/2
-        for li,ln in enumerate(lines): c.setFont("Helvetica-Bold",5.5); c.drawCentredString(CR_XS[i]+cw/2, sy-li*(lh+0.5), ln)
+        for li,ln in enumerate(lines):
+            c.setFont("Helvetica-Bold",5.5); c.drawCentredString(CR_XS[i]+cw/2, sy-li*(lh+0.5), ln)
     cur_y-=CR_HDR_H; CR_ROW_H=6*mm
     for row in meta.get("change_records",[]):
         vals=[row.get("sno",""),row.get("date",""),row.get("rev",""),row.get("desc",""),
@@ -644,11 +661,6 @@ st.markdown("""
         border: 1.5px solid #2B6CB0; border-radius: 10px;
         padding: 12px 16px; margin-bottom: 12px;
         font-size: 13px; color: #1A365D;
-    }
-    .step-badge {
-        display:inline-block; background:#2B6CB0; color:white;
-        border-radius:12px; padding:2px 10px; font-size:11px;
-        font-weight:600; margin-right:6px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -684,7 +696,6 @@ with tab1:
 
 # ── TAB 2 ──────────────────────────────────────────────────────────────────────
 with tab2:
-    # ── Mode toggle ───────────────────────────────────────────────────────────
     st.markdown("""
     <div class="ai-banner">
         🤖 <b>AI-Powered Flow Builder</b> — Describe your process in plain English and let AI generate
@@ -696,19 +707,15 @@ with tab2:
     with mode_col:
         mode = st.radio("Input mode", ["🤖 AI Generate", "✏️ Manual"], horizontal=True,
                         label_visibility="collapsed")
-
     st.session_state.ai_mode = mode
 
-    # ── Split: left = input, right = live preview ──────────────────────────
     input_col, preview_col = st.columns([1, 1], gap="large")
 
     with input_col:
-        # ── AI MODE ──────────────────────────────────────────────────────────
         if "AI" in mode:
             st.subheader("✍️ Describe Your Process")
             st.caption("Write naturally — mention decisions (YES/NO), branches, loops, and who does what.")
 
-            # Example buttons
             st.markdown("**Quick examples:**")
             ex_cols = st.columns(3)
             example_labels = ["📦 Procurement", "🏖️ Leave Approval", "🏭 Manufacturing QC"]
@@ -721,7 +728,7 @@ with tab2:
                 "Process description",
                 value=st.session_state.ai_description,
                 height=200,
-                placeholder="e.g.  Start → Receive goods → Inspect quality → If OK: update stock → notify manager → End. If fail: return to supplier.",
+                placeholder="e.g. Start → Receive goods → Inspect quality → If OK: update stock → notify manager → End.",
                 label_visibility="collapsed",
                 key="ai_desc_input",
             )
@@ -739,8 +746,10 @@ with tab2:
             if generate_btn:
                 if not description.strip():
                     st.warning("Please describe your process first.")
+                elif not st.session_state.get("openai_api_key", "").strip():
+                    st.error("⚠️ Please enter your OpenAI API key in the sidebar first.")
                 else:
-                    with st.spinner("🤖 Claude is reading your process and building the flowchart…"):
+                    with st.spinner("🤖 AI is reading your process and building the flowchart…"):
                         try:
                             result = generate_steps_with_ai(description)
                             if result:
@@ -752,18 +761,16 @@ with tab2:
                         except Exception as e:
                             st.error(f"⚠️ Error: {e}")
 
-            # How-to tip
             with st.expander("💡 Tips for best results", expanded=False):
                 st.markdown("""
 - **Use arrows** `→` to indicate flow between steps
 - **Say YES/NO** after decisions: *"If approved (YES): … If rejected (NO): …"*
-- **Mention loops**: *"loop back to step X"* or *"go back to inspection"*
-- **Name roles**: *"Manager approves"*, *"Warehouse picks items"* → fills Responsible column
+- **Mention loops**: *"loop back to step X"*
+- **Name roles**: *"Manager approves"* → fills Responsible column
 - **Name documents**: *"Fill Form F-12"* → fills Doc Format column
 - **Short sentences** per step give cleaner shape labels
                 """)
 
-        # ── MANUAL MODE ───────────────────────────────────────────────────────
         else:
             with st.expander("📖 How to build branching flows", expanded=False):
                 st.markdown("""
@@ -830,7 +837,7 @@ with tab2:
                     else:
                         st.warning("Please enter shape text.")
 
-        # ── Step list (shared by both modes) ──────────────────────────────────
+        # ── Step list ──────────────────────────────────────────────────────────
         st.divider()
         n = len(st.session_state.steps)
         if n:
@@ -844,20 +851,16 @@ with tab2:
                 lt_raw  = step.get("loop_to","")
                 lt_disp = str(int(lt_raw)+1) if str(lt_raw).isdigit() else "—"
                 with st.expander(f"**Step {i+1}** {col_tag} › [{label}]  {step['text']}", expanded=False):
-                    # Inline edit
                     new_text = st.text_input("Edit text", value=step["text"], key=f"edit_{i}")
                     if new_text != step["text"]:
-                        st.session_state.steps[i]["text"] = new_text
-                        st.rerun()
-                    # Inline responsible / doc_format
+                        st.session_state.steps[i]["text"] = new_text; st.rerun()
                     e1, e2, e3 = st.columns(3)
                     nr = e1.text_input("Responsible", value=step.get("responsible",""), key=f"resp_{i}")
                     nd = e2.text_input("Doc Format",  value=step.get("doc_format",""),  key=f"doc_{i}")
                     nm = e3.text_input("Measurement", value=step.get("measurement",""), key=f"meas_{i}")
-                    if nr != step.get("responsible",""): st.session_state.steps[i]["responsible"] = nr; st.rerun()
-                    if nd != step.get("doc_format",""):  st.session_state.steps[i]["doc_format"]  = nd; st.rerun()
-                    if nm != step.get("measurement",""): st.session_state.steps[i]["measurement"] = nm; st.rerun()
-
+                    if nr != step.get("responsible",""): st.session_state.steps[i]["responsible"]=nr; st.rerun()
+                    if nd != step.get("doc_format",""):  st.session_state.steps[i]["doc_format"]=nd;  st.rerun()
+                    if nm != step.get("measurement",""): st.session_state.steps[i]["measurement"]=nm; st.rerun()
                     bc1, bc2, bc3, _ = st.columns([1,1,1,4])
                     if bc1.button("⬆️ Up",     key=f"up_{i}"):
                         if i>0:
@@ -878,7 +881,7 @@ with tab2:
             else:
                 st.info("No steps yet. Use the form above to add process flow steps.")
 
-    # ── RIGHT: Live Preview ────────────────────────────────────────────────────
+    # ── Live Preview ───────────────────────────────────────────────────────────
     with preview_col:
         st.subheader("👁️ Live Flowchart Preview")
         st.caption("Updates automatically as steps change.")
@@ -886,7 +889,6 @@ with tab2:
         n = len(st.session_state.steps)
         est_h = max(320, min(900, n * 88 + 150)) if n > 0 else 260
         components.html(preview_html, height=est_h, scrolling=False)
-
         if st.session_state.steps:
             st.markdown("---")
             st.markdown("**Shape colour guide:**")
