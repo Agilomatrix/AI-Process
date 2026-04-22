@@ -2,8 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import io
 import json
-import os
-from openai import OpenAI
+import anthropic
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -15,16 +14,16 @@ st.set_page_config(page_title="SOP Builder", layout="wide")
 with st.sidebar:
     st.header("🔑 API Configuration")
     api_key = st.text_input(
-        "OpenAI API Key",
+        "Anthropic API Key",
         type="password",
-        placeholder="sk-...",
-        value=st.session_state.get("openai_api_key", ""),
+        placeholder="sk-ant-...",
+        value=st.session_state.get("anthropic_api_key", ""),
     )
     if api_key:
-        st.session_state.openai_api_key = api_key
+        st.session_state.anthropic_api_key = api_key
         st.success("API key saved ✓")
     else:
-        st.warning("Enter your OpenAI API key to use AI generation.")
+        st.warning("Enter your Anthropic API key to use AI generation.")
 
 # ─── Session State ────────────────────────────────────────────────────────────
 defaults = {
@@ -45,7 +44,7 @@ defaults = {
     "composed_by": "Agilomatrix Pvt Ltd (connectus@agilomatrix.com)",
     "ai_description": "",
     "ai_mode": "AI Generate",
-    "openai_api_key": "",
+    "anthropic_api_key": "",
     "change_records": [
         {"sno": "1", "date": "17-12-2024", "rev": "0.0", "desc": "Original Version",
          "change_letter": "NA", "prepared": "Prince S", "reviewed": "Ajay G", "approved": "Vilas B"},
@@ -99,28 +98,35 @@ EXAMPLES = [
     "Raw material arrives → Inspect quality → If pass (YES): Move to production → Manufacture product → Final QC check → If QC pass (YES): Pack and label → Dispatch → End. If QC fail (NO): Rework or scrap",
 ]
 
-# ─── AI Generator ─────────────────────────────────────────────────────────────
+# ─── AI Generator (Anthropic Claude) ─────────────────────────────────────────
 def generate_steps_with_ai(description: str):
-    api_key = st.session_state.get("openai_api_key", "").strip()
+    api_key = st.session_state.get("anthropic_api_key", "").strip()
     if not api_key:
-        st.error("⚠️ OpenAI API key not found. Please enter your API key in the sidebar.")
+        st.error("⚠️ Anthropic API key not found. Please enter your API key in the sidebar.")
         return None
 
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model="gpt-4o",
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
         max_tokens=2048,
+        system=AI_SYSTEM_PROMPT,
         messages=[
-            {"role": "system", "content": AI_SYSTEM_PROMPT},
-            {"role": "user",   "content": f"Convert this process into SOP flowchart steps:\n\n{description}"},
+            {
+                "role": "user",
+                "content": f"Convert this process into SOP flowchart steps:\n\n{description}"
+            }
         ],
-        temperature=0.2,
     )
-    raw = response.choices[0].message.content.strip()
+
+    raw = response.content[0].text.strip()
+    # Strip any accidental markdown fences
     raw = raw.replace("```json", "").replace("```", "").strip()
+
     parsed = json.loads(raw)
     if not isinstance(parsed, list):
         raise ValueError("AI returned non-list JSON")
+
+    # Normalise every step
     for step in parsed:
         step.setdefault("input_label", "")
         step.setdefault("output_label", "")
@@ -207,7 +213,7 @@ def generate_svg_preview(steps):
         return out
     def arrowhead_d(tx, ty, direction="down"):
         sz = 5
-        if direction == "down":   return f"M{tx},{ty} L{tx-sz},{ty-sz*1.5} L{tx+sz},{ty-sz*1.5} Z"
+        if direction == "down":    return f"M{tx},{ty} L{tx-sz},{ty-sz*1.5} L{tx+sz},{ty-sz*1.5} Z"
         elif direction == "right": return f"M{tx},{ty} L{tx-sz*1.5},{ty-sz} L{tx-sz*1.5},{ty+sz} Z"
         elif direction == "left":  return f"M{tx},{ty} L{tx+sz*1.5},{ty-sz} L{tx+sz*1.5},{ty+sz} Z"
         else:                      return f"M{tx},{ty} L{tx-sz},{ty+sz*1.5} L{tx+sz},{ty+sz*1.5} Z"
@@ -463,8 +469,8 @@ def draw_table_structure(c, XS, FLOW_COL_IDX, table_top, table_bottom, row_botto
     c.setLineWidth(0.4)
     for row_bottom in row_bottoms[:-1]:
         y=row_bottom
-        if FLOW_COL_IDX>0:          c.line(XS[0], y, XS[FLOW_COL_IDX], y)
-        if FLOW_COL_IDX<len(XS)-2:  c.line(XS[FLOW_COL_IDX+1], y, XS[-1], y)
+        if FLOW_COL_IDX>0:         c.line(XS[0], y, XS[FLOW_COL_IDX], y)
+        if FLOW_COL_IDX<len(XS)-2: c.line(XS[FLOW_COL_IDX+1], y, XS[-1], y)
 
 def generate_pdf(steps, meta):
     buf=io.BytesIO(); PW,PH=landscape(A4); c=canvas.Canvas(buf, pagesize=(PW,PH))
@@ -581,7 +587,7 @@ def generate_pdf(steps, meta):
                         draw_arrow_down(c, a["cx"], s["bot"], a["top"], color=arr_color)
                         if arrow_label:
                             c.setFont("Helvetica-Bold",6); c.setFillColor(lbl_color)
-                            c.drawCentredString(a["cx"]+6, (s["bot"]+a["top"])/2, arrow_label); c.setFillColor(colors.black)
+                            c.drawCentredString(a["cx"]+6,(s["bot"]+a["top"])/2,arrow_label); c.setFillColor(colors.black)
                     else:
                         draw_elbow_arrow(c, s["cx"], s["bot"], a["cx"], a["top"], color=arr_color, label=arrow_label, label_color=lbl_color)
         else:
@@ -607,8 +613,8 @@ def generate_pdf(steps, meta):
                 c.setStrokeColor(colors.black)
     for idx,step in enumerate(steps):
         a=anchors[idx]; sh_x,sh_bot=a["sh_x"],a["sh_bot"]; sh_w,sh_h=a["sh_w"],a["sh_h"]; shape=step["shape"]
-        if shape=="rect":         draw_rect_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
-        elif shape=="oval":       draw_oval_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
+        if shape=="rect":            draw_rect_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
+        elif shape=="oval":          draw_oval_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
         elif shape=="diamond":
             draw_diamond_shape(c, sh_x, sh_bot, sh_w, sh_h, step["text"])
             yes_lbl=step.get("yes_label","YES") or "YES"; no_lbl=step.get("no_label","NO") or "NO"
@@ -746,10 +752,10 @@ with tab2:
             if generate_btn:
                 if not description.strip():
                     st.warning("Please describe your process first.")
-                elif not st.session_state.get("openai_api_key", "").strip():
-                    st.error("⚠️ Please enter your OpenAI API key in the sidebar first.")
+                elif not st.session_state.get("anthropic_api_key", "").strip():
+                    st.error("⚠️ Please enter your Anthropic API key in the sidebar first.")
                 else:
-                    with st.spinner("🤖 AI is reading your process and building the flowchart…"):
+                    with st.spinner("🤖 Claude is reading your process and building the flowchart…"):
                         try:
                             result = generate_steps_with_ai(description)
                             if result:
