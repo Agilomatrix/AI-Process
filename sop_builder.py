@@ -1,7 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import io, json, base64
-from reportlab.lib.pagesizes import A3, landscape
+from reportlab.lib.pagesizes import A3, A4, landscape, portrait
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -57,6 +57,9 @@ defaults = {
     "dw_active": False,
     "dw_stage": None,
     "dw_data": {},
+    # NEW: print format state
+    "pdf_page_size": "A3",
+    "pdf_orientation": "Landscape",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -458,134 +461,17 @@ function zoom(d){{s=Math.max(0.3,Math.min(3,s+d));document.getElementById('si').
 function resetZoom(){{s=1;document.getElementById('si').style.transform='scale(1)';document.getElementById('zl').textContent='100%';}}
 </script></body></html>"""
 
-# ─── PDF Generation (A3 Landscape) ───────────────────────────────────────────
-def wrapped_lines_pdf(c, text, max_w, fn, fs):
-    words=str(text).split(); lines=[]; cur=""
-    for w in words:
-        t=(cur+" "+w).strip()
-        if c.stringWidth(t,fn,fs)<=max_w: cur=t
-        else:
-            if cur: lines.append(cur)
-            cur=w
-    if cur: lines.append(cur)
-    return lines or [""]
-
-def draw_ctext(c, text, cx, cy, max_w, fn="Helvetica", fs=10, col=colors.black):
-    lines = wrapped_lines_pdf(c, text, max_w, fn, fs)
-    lh = fs * 1.25
-    block_h = len(lines) * lh
-    y0 = cy + block_h/2 - lh*0.8
-    c.setFont(fn, fs); c.setFillColor(col)
-    for i, ln in enumerate(lines):
-        c.drawCentredString(cx, y0 - i*lh, ln)
-
-def draw_ltext(c, text, x, cy, max_w, fn="Helvetica", fs=10, col=colors.black):
-    lines = wrapped_lines_pdf(c, text, max_w, fn, fs)
-    lh = fs * 1.25
-    block_h = len(lines) * lh
-    y0 = cy + block_h/2 - lh*0.8
-    c.setFont(fn, fs); c.setFillColor(col)
-    for i, ln in enumerate(lines):
-        c.drawString(x, y0 - i*lh, ln)
-
-# PDF arrowhead helpers
-PDF_AH_SZ  = 1.8   # mm
-PDF_AH_LEG = PDF_AH_SZ * 1.8
-PDF_AH_GAP = 0.8
-
-def arrow_head_pdf(c, tx, ty, d="down"):
-    sz  = PDF_AH_SZ  * mm
-    leg = PDF_AH_LEG * mm
-    c.setFillColor(colors.black)
-    p = c.beginPath()
-    if d == "down":
-        p.moveTo(tx,ty); p.lineTo(tx-sz, ty+leg); p.lineTo(tx+sz, ty+leg)
-    elif d == "up":
-        p.moveTo(tx,ty); p.lineTo(tx-sz, ty-leg); p.lineTo(tx+sz, ty-leg)
-    elif d == "right":
-        p.moveTo(tx,ty); p.lineTo(tx-leg, ty+sz); p.lineTo(tx-leg, ty-sz)
-    elif d == "left":
-        p.moveTo(tx,ty); p.lineTo(tx+leg, ty+sz); p.lineTo(tx+leg, ty-sz)
-    p.close(); c.drawPath(p, fill=1, stroke=0)
-
-AH_STOP = (PDF_AH_LEG + PDF_AH_GAP) * mm
-
-def pdf_line_down(c, x, y_top_src, y_top_tgt, col=colors.black):
-    c.setStrokeColor(col); c.setLineWidth(0.6)
-    c.line(x, y_top_src, x, y_top_tgt + AH_STOP)
-    arrow_head_pdf(c, x, y_top_tgt, "down")
-    c.setStrokeColor(colors.black)
-
-def pdf_elbow_down(c, sx, sy_bot, ex, ey_top, col=colors.black, lbl="", lbl_col=colors.black):
-    mid_y = (sy_bot + ey_top) / 2
-    c.setStrokeColor(col); c.setLineWidth(0.6)
-    c.line(sx, sy_bot, sx, mid_y)
-    c.line(sx, mid_y, ex, mid_y)
-    c.line(ex, mid_y, ex, ey_top + AH_STOP)
-    arrow_head_pdf(c, ex, ey_top, "down")
-    if lbl:
-        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
-        c.drawCentredString((sx+ex)/2, mid_y + 1*mm, lbl)
-    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
-
-def pdf_arrow_horiz(c, x_from, x_to, y, direction="right",
-                    col=colors.black, lbl="", lbl_col=colors.black):
-    c.setStrokeColor(col); c.setLineWidth(0.6)
-    if direction == "right":
-        c.line(x_from, y, x_to - AH_STOP, y)
-        arrow_head_pdf(c, x_to, y, "right")
-    else:
-        c.line(x_from, y, x_to + AH_STOP, y)
-        arrow_head_pdf(c, x_to, y, "left")
-    if lbl:
-        mid_x = (x_from + x_to) / 2
-        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
-        c.drawCentredString(mid_x, y + 1.2*mm, lbl)
-    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
-
-def pdf_horiz_then_down(c, x_from, y_from, x_to, y_to,
-                        col=colors.black, lbl="", lbl_col=colors.black):
-    c.setStrokeColor(col); c.setLineWidth(0.6)
-    c.line(x_from, y_from, x_to, y_from)
-    c.line(x_to, y_from, x_to, y_to + AH_STOP)
-    arrow_head_pdf(c, x_to, y_to, "down")
-    if lbl:
-        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
-        c.drawCentredString((x_from+x_to)/2, y_from + 1*mm, lbl)
-    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
-
-# ── UPDATED: increased default font sizes for all shape draw functions ────────
-
-def draw_rect_pdf(c, x, y, w, h, text, fs=10):
-    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
-    c.rect(x, y, w, h, fill=1, stroke=1)
-    draw_ctext(c, text, x+w/2, y+h/2, w-3, fs=fs)
-
-def draw_oval_pdf(c, x, y, w, h, text, fs=10):
-    c.setStrokeColor(colors.black); c.setFillColor(colors.HexColor("#2c2c2c")); c.setLineWidth(0.5)
-    c.ellipse(x, y, x+w, y+h, fill=1, stroke=1)
-    draw_ctext(c, text, x+w/2, y+h/2, w-3, fs=fs, col=colors.white)
-
-def draw_diamond_pdf(c, x, y, w, h, text, fs=9):
-    cx=x+w/2; cy=y+h/2
-    p=c.beginPath()
-    p.moveTo(cx, y+h); p.lineTo(x+w, cy); p.lineTo(cx, y); p.lineTo(x, cy); p.close()
-    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
-    c.drawPath(p, fill=1, stroke=1)
-    draw_ctext(c, text, cx, cy, w*0.50, fs=fs)
-
-def draw_para_pdf(c, x, y, w, h, text, fs=10):
-    sk=4
-    p=c.beginPath()
-    p.moveTo(x+sk, y+h); p.lineTo(x+w, y+h); p.lineTo(x+w-sk, y); p.lineTo(x, y); p.close()
-    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
-    c.drawPath(p, fill=1, stroke=1)
-    draw_ctext(c, text, x+w/2, y+h/2, w-6, fs=fs)
-
-
-def generate_pdf(steps, meta):
+# ─── PDF Generation — supports A3/A4 × Landscape/Portrait ────────────────────
+def generate_pdf(steps, meta, page_size="A3", orientation="Landscape"):
     buf = io.BytesIO()
-    PW, PH = landscape(A3)
+
+    # ── Resolve page dimensions ───────────────────────────────────────────────
+    base = A3 if page_size == "A3" else A4
+    if orientation == "Landscape":
+        PW, PH = landscape(base)
+    else:
+        PW, PH = portrait(base)
+
     c = canvas.Canvas(buf, pagesize=(PW, PH))
 
     ML = 8*mm; MR = 8*mm; MT = 8*mm
@@ -612,10 +498,9 @@ def generate_pdf(steps, meta):
     cur_y = PH - MT
 
     # ── SECTION 1: TOP HEADER ─────────────────────────────────────────────────
-    # META_W fixed to compact width so value columns don't stretch across the page
     LOGO_W  = 50*mm
-    META_W  = 110*mm          # fixed: 4 cols of label+value, compact
-    TITLE_W = TW - LOGO_W - META_W   # takes the remaining middle space
+    META_W  = 110*mm
+    TITLE_W = TW - LOGO_W - META_W
 
     hdr_top = cur_y
     hdr_bot = cur_y - HDR_H
@@ -647,14 +532,12 @@ def generate_pdf(steps, meta):
     for i, ln in enumerate(sub_lines):
         c.drawCentredString(title_cx, title_mid - 8 - i*12, ln)
 
-    # Metadata grid: 4 columns — label1 | value1 | label2 | value2
-    # Fixed compact widths so nothing stretches to page edge
     RX  = ML + LOGO_W + TITLE_W
     rh  = HDR_H / 4
-    c1w = 20*mm   # label col 1  (SOP No., Rev No., Unit, Sub Area)
-    c3w = 16*mm   # label col 2  (Page, Date, Area, Zone)
-    c2w = (META_W - c1w - c3w) / 2   # value col 1
-    c4w = META_W - c1w - c2w - c3w   # value col 2
+    c1w = 20*mm
+    c3w = 16*mm
+    c2w = (META_W - c1w - c3w) / 2
+    c4w = META_W - c1w - c2w - c3w
     meta_rows = [
         ("SOP No.", meta["sop_no"],  "Page",    meta["page_info"]),
         ("Rev No.", meta["rev_no"],  "Date",    meta["date"]),
@@ -703,7 +586,6 @@ def generate_pdf(steps, meta):
           ML+COL_IN+COL_FLOW+COL_OUT+COL_RESP+COL_DOC,
           ML+TW]
 
-    # ── UPDATED: font size 11 for process banner ──────────────────────────────
     c.setFillColor(colors.HexColor("#BDD7EE"))
     c.rect(ML, cur_y-BNR_H, TW, BNR_H, fill=1, stroke=1); c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 11)
@@ -711,7 +593,6 @@ def generate_pdf(steps, meta):
     c.drawString(XS[2]+3, cur_y-BNR_H/2-3, f"OWNER :  {meta['owner']}")
     cur_y -= BNR_H
 
-    # ── UPDATED: font size 9 for column headers ───────────────────────────────
     hdr_labels = ["Input","Process Flow","Output","Responsible","Doc. Format /\nSystem","Effective\nMeasurement"]
     for i,label in enumerate(hdr_labels):
         cw = XS[i+1]-XS[i]
@@ -758,7 +639,6 @@ def generate_pdf(steps, meta):
         if col=="right":       return R_CX  or C_CX
         return C_CX
 
-    # Build rows
     rows = []; step_to_row = {}
     for idx, step in enumerate(steps):
         col = step.get("column","left")
@@ -782,7 +662,6 @@ def generate_pdf(steps, meta):
             rows.append({"left_branch":None,"left":idx,"right":None})
             step_to_row[idx] = len(rows)-1
 
-    # Scale row heights to fit FLOW_AVAIL exactly
     BASE_SH = {"rect":1.0, "oval":0.77, "parallelogram":1.0, "diamond":1.54, "arrow_text":0.46}
     V_PAD_RATIO = 0.27
 
@@ -796,7 +675,6 @@ def generate_pdf(steps, meta):
     total_ratio = sum(row_ratios)
     UNIT = FLOW_AVAIL / total_ratio if total_ratio > 0 else 10*mm
     UNIT = min(UNIT, 18*mm)
-
     V_PAD = V_PAD_RATIO * UNIT
 
     SHAPE_PDF_HEIGHTS = {
@@ -813,7 +691,6 @@ def generate_pdf(steps, meta):
         else:                    sub = SUB_C_W
         return max(sub * 0.82, 15*mm)
 
-    # Compute row Y positions
     TABLE_TOP = cur_y
     row_geom = []; sy2 = TABLE_TOP
     for row, ratio in zip(rows, row_ratios):
@@ -824,7 +701,6 @@ def generate_pdf(steps, meta):
     TABLE_BOTTOM = sy2
     TBL_H = TABLE_TOP - TABLE_BOTTOM
 
-    # Draw table background + border
     c.setFillColor(colors.white)
     c.rect(ML, TABLE_BOTTOM, TW, TBL_H, fill=1, stroke=0)
     c.setStrokeColor(colors.black); c.setLineWidth(0.7)
@@ -847,7 +723,6 @@ def generate_pdf(steps, meta):
         c.line(XS[0], y, XS[1], y)
         c.line(XS[2], y, XS[-1], y)
 
-    # Build shape anchors
     anchors = {}
     for idx, step in enumerate(steps):
         ri  = step_to_row[idx]; rg = row_geom[ri]
@@ -876,7 +751,6 @@ def generate_pdf(steps, meta):
     RED   = colors.HexColor("#CC0000")
     BLUE  = colors.HexColor("#1a6dcc")
 
-    # ── UPDATED: font size 9 for side-column text ─────────────────────────────
     for pi, row in enumerate(rows):
         rg = row_geom[pi]; ry = rg["ry"]; ROW_H = rg["ROW_H"]
         ref = (row.get("left") if row.get("left") is not None else
@@ -890,7 +764,6 @@ def generate_pdf(steps, meta):
                 cw = XS[ci+1]-XS[ci]
                 draw_ctext(c, txt, XS[ci]+cw/2, ry+ROW_H/2, cw-3, fs=9)
 
-    # ── Arrows ────────────────────────────────────────────────────────────────
     for idx, step in enumerate(steps):
         a    = anchors[idx]
         lbl  = (step.get("arrow_label") or "").strip()
@@ -904,18 +777,14 @@ def generate_pdf(steps, meta):
             src = int(cf)
             if 0 <= src < len(anchors):
                 s = anchors[src]
-
                 if side == "right side →":
-                    x_from = s["right"]; x_to = a["left"]
-                    y      = s["cy"]
+                    x_from = s["right"]; x_to = a["left"]; y = s["cy"]
                     if abs(s["cy"] - a["cy"]) < 1*mm:
                         pdf_arrow_horiz(c, x_from, x_to, y, "right", ac, lbl, ac)
                     else:
                         pdf_horiz_then_down(c, x_from, s["cy"], x_to, a["top"], ac, lbl, ac)
-
                 elif side == "left side ←":
-                    x_from = s["left"]; x_to = a["right"]
-                    y      = s["cy"]
+                    x_from = s["left"]; x_to = a["right"]; y = s["cy"]
                     if abs(s["cy"] - a["cy"]) < 1*mm:
                         pdf_arrow_horiz(c, x_from, x_to, y, "left", ac, lbl, ac)
                     else:
@@ -928,7 +797,6 @@ def generate_pdf(steps, meta):
                             c.setFont("Helvetica-Bold", 7); c.setFillColor(ac)
                             c.drawCentredString((x_from+x_to)/2, s["cy"]+1*mm, lbl)
                         c.setStrokeColor(colors.black); c.setFillColor(colors.black)
-
                 else:
                     if abs(s["cx"] - a["cx"]) < 1:
                         pdf_line_down(c, a["cx"], s["bot"], a["top"], col=ac)
@@ -945,7 +813,6 @@ def generate_pdf(steps, meta):
                     ps = anchors[prev]
                     pdf_line_down(c, a["cx"], ps["bot"], a["top"])
 
-        # Loop-back arrow (dashed)
         if lt.isdigit():
             dest_idx = int(lt)
             if 0 <= dest_idx < len(anchors):
@@ -964,7 +831,6 @@ def generate_pdf(steps, meta):
                     c.setFillColor(colors.black)
                 c.setStrokeColor(colors.black)
 
-    # ── Shapes (drawn on top of arrows) ───────────────────────────────────────
     GREEN2 = colors.HexColor("#006600"); RED2 = colors.HexColor("#CC0000")
     for idx, step in enumerate(steps):
         a     = anchors[idx]
@@ -980,7 +846,6 @@ def generate_pdf(steps, meta):
         elif shape=="parallelogram": draw_para_pdf(c, sh_x, sh_bot, sw, sh_h_val, txt)
         elif shape=="diamond":
             draw_diamond_pdf(c, sh_x, sh_bot, sw, sh_h_val, txt)
-            # ── UPDATED: YES/NO labels font size 7.5 ─────────────────────────
             c.setFont("Helvetica-Bold", 7.5); c.setFillColor(GREEN2)
             c.drawString(sh_x+sw+1*mm, a["cy"]-1.5*mm, yl)
             nw = c.stringWidth(nl, "Helvetica-Bold", 7.5)
@@ -988,11 +853,9 @@ def generate_pdf(steps, meta):
             c.drawString(sh_x-nw-1*mm, a["cy"]-1.5*mm, nl)
             c.setFillColor(colors.black)
         elif shape=="arrow_text":
-            # ── UPDATED: annotation text font size 8 ─────────────────────────
             c.setFont("Helvetica-Oblique", 8); c.setFillColor(colors.HexColor("#333333"))
             c.drawCentredString(a["cx"], a["cy"], txt); c.setFillColor(colors.black)
 
-        # Step number badge
         badge_r = 2.8*mm
         bx = sh_x + badge_r; by = sh_bot + sh_h_val - badge_r
         c.setFillColor(colors.HexColor("#2B6CB0"))
@@ -1007,7 +870,6 @@ def generate_pdf(steps, meta):
     cur_y -= 2.5*mm
     c.setFillColor(colors.HexColor("#BDD7EE"))
     c.rect(ML, cur_y-CR_TH, TW, CR_TH, fill=1, stroke=1); c.setFillColor(colors.black)
-    # ── UPDATED: "SOP Change Record" title font size 11 ──────────────────────
     c.setFont("Helvetica-Bold", 11)
     c.drawCentredString(ML+TW/2, cur_y-CR_TH/2-3, "SOP Change Record")
     cur_y -= CR_TH
@@ -1019,7 +881,6 @@ def generate_pdf(steps, meta):
     CR_XS = [ML]
     for w in CR_W: CR_XS.append(CR_XS[-1]+w)
 
-    # ── UPDATED: change record column header font size 8.5 ───────────────────
     for i,lbl in enumerate(CR_COLS):
         cw = CR_XS[i+1]-CR_XS[i]
         c.setFillColor(colors.HexColor("#D6E8F7"))
@@ -1032,7 +893,6 @@ def generate_pdf(steps, meta):
             c.drawCentredString(CR_XS[i]+cw/2, y0-li*lh_cr, ln)
     cur_y -= CR_HH
 
-    # ── UPDATED: change record data rows font size 9 ──────────────────────────
     for row in meta.get("change_records", []):
         vals = [row.get("sno",""), row.get("date",""), row.get("rev",""), row.get("desc",""),
                 row.get("change_letter",""), row.get("prepared",""),
@@ -1052,11 +912,109 @@ def generate_pdf(steps, meta):
         cur_y -= CR_RH
 
     cur_y -= 3*mm
-    # ── UPDATED: footer font size 9 ───────────────────────────────────────────
     c.setFont("Helvetica-Oblique", 9); c.setFillColor(colors.HexColor("#555555"))
     c.drawCentredString(ML+TW/2, cur_y, f"Composed By: {meta['composed_by']}")
 
     c.save(); buf.seek(0); return buf
+
+
+# ─── PDF helper functions (must come before generate_pdf) ─────────────────────
+def wrapped_lines_pdf(c, text, max_w, fn, fs):
+    words=str(text).split(); lines=[]; cur=""
+    for w in words:
+        t=(cur+" "+w).strip()
+        if c.stringWidth(t,fn,fs)<=max_w: cur=t
+        else:
+            if cur: lines.append(cur)
+            cur=w
+    if cur: lines.append(cur)
+    return lines or [""]
+
+def draw_ctext(c, text, cx, cy, max_w, fn="Helvetica", fs=10, col=colors.black):
+    lines = wrapped_lines_pdf(c, text, max_w, fn, fs)
+    lh = fs * 1.25; block_h = len(lines) * lh; y0 = cy + block_h/2 - lh*0.8
+    c.setFont(fn, fs); c.setFillColor(col)
+    for i, ln in enumerate(lines): c.drawCentredString(cx, y0 - i*lh, ln)
+
+def draw_ltext(c, text, x, cy, max_w, fn="Helvetica", fs=10, col=colors.black):
+    lines = wrapped_lines_pdf(c, text, max_w, fn, fs)
+    lh = fs * 1.25; block_h = len(lines) * lh; y0 = cy + block_h/2 - lh*0.8
+    c.setFont(fn, fs); c.setFillColor(col)
+    for i, ln in enumerate(lines): c.drawString(x, y0 - i*lh, ln)
+
+PDF_AH_SZ  = 1.8
+PDF_AH_LEG = PDF_AH_SZ * 1.8
+PDF_AH_GAP = 0.8
+
+def arrow_head_pdf(c, tx, ty, d="down"):
+    sz = PDF_AH_SZ * mm; leg = PDF_AH_LEG * mm
+    c.setFillColor(colors.black); p = c.beginPath()
+    if d == "down":   p.moveTo(tx,ty); p.lineTo(tx-sz, ty+leg); p.lineTo(tx+sz, ty+leg)
+    elif d == "up":   p.moveTo(tx,ty); p.lineTo(tx-sz, ty-leg); p.lineTo(tx+sz, ty-leg)
+    elif d == "right":p.moveTo(tx,ty); p.lineTo(tx-leg, ty+sz); p.lineTo(tx-leg, ty-sz)
+    elif d == "left": p.moveTo(tx,ty); p.lineTo(tx+leg, ty+sz); p.lineTo(tx+leg, ty-sz)
+    p.close(); c.drawPath(p, fill=1, stroke=0)
+
+AH_STOP = (PDF_AH_LEG + PDF_AH_GAP) * mm
+
+def pdf_line_down(c, x, y_top_src, y_top_tgt, col=colors.black):
+    c.setStrokeColor(col); c.setLineWidth(0.6)
+    c.line(x, y_top_src, x, y_top_tgt + AH_STOP)
+    arrow_head_pdf(c, x, y_top_tgt, "down"); c.setStrokeColor(colors.black)
+
+def pdf_elbow_down(c, sx, sy_bot, ex, ey_top, col=colors.black, lbl="", lbl_col=colors.black):
+    mid_y = (sy_bot + ey_top) / 2
+    c.setStrokeColor(col); c.setLineWidth(0.6)
+    c.line(sx, sy_bot, sx, mid_y); c.line(sx, mid_y, ex, mid_y)
+    c.line(ex, mid_y, ex, ey_top + AH_STOP)
+    arrow_head_pdf(c, ex, ey_top, "down")
+    if lbl:
+        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
+        c.drawCentredString((sx+ex)/2, mid_y + 1*mm, lbl)
+    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
+
+def pdf_arrow_horiz(c, x_from, x_to, y, direction="right", col=colors.black, lbl="", lbl_col=colors.black):
+    c.setStrokeColor(col); c.setLineWidth(0.6)
+    if direction == "right":
+        c.line(x_from, y, x_to - AH_STOP, y); arrow_head_pdf(c, x_to, y, "right")
+    else:
+        c.line(x_from, y, x_to + AH_STOP, y); arrow_head_pdf(c, x_to, y, "left")
+    if lbl:
+        mid_x = (x_from + x_to) / 2
+        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
+        c.drawCentredString(mid_x, y + 1.2*mm, lbl)
+    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
+
+def pdf_horiz_then_down(c, x_from, y_from, x_to, y_to, col=colors.black, lbl="", lbl_col=colors.black):
+    c.setStrokeColor(col); c.setLineWidth(0.6)
+    c.line(x_from, y_from, x_to, y_from)
+    c.line(x_to, y_from, x_to, y_to + AH_STOP)
+    arrow_head_pdf(c, x_to, y_to, "down")
+    if lbl:
+        c.setFont("Helvetica-Bold", 7); c.setFillColor(lbl_col)
+        c.drawCentredString((x_from+x_to)/2, y_from + 1*mm, lbl)
+    c.setStrokeColor(colors.black); c.setFillColor(colors.black)
+
+def draw_rect_pdf(c, x, y, w, h, text, fs=10):
+    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
+    c.rect(x, y, w, h, fill=1, stroke=1); draw_ctext(c, text, x+w/2, y+h/2, w-3, fs=fs)
+
+def draw_oval_pdf(c, x, y, w, h, text, fs=10):
+    c.setStrokeColor(colors.black); c.setFillColor(colors.HexColor("#2c2c2c")); c.setLineWidth(0.5)
+    c.ellipse(x, y, x+w, y+h, fill=1, stroke=1)
+    draw_ctext(c, text, x+w/2, y+h/2, w-3, fs=fs, col=colors.white)
+
+def draw_diamond_pdf(c, x, y, w, h, text, fs=9):
+    cx=x+w/2; cy=y+h/2
+    p=c.beginPath(); p.moveTo(cx, y+h); p.lineTo(x+w, cy); p.lineTo(cx, y); p.lineTo(x, cy); p.close()
+    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
+    c.drawPath(p, fill=1, stroke=1); draw_ctext(c, text, cx, cy, w*0.50, fs=fs)
+
+def draw_para_pdf(c, x, y, w, h, text, fs=10):
+    sk=4; p=c.beginPath()
+    p.moveTo(x+sk, y+h); p.lineTo(x+w, y+h); p.lineTo(x+w-sk, y); p.lineTo(x, y); p.close()
+    c.setStrokeColor(colors.black); c.setFillColor(colors.white); c.setLineWidth(0.5)
+    c.drawPath(p, fill=1, stroke=1); draw_ctext(c, text, x+w/2, y+h/2, w-6, fs=fs)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1080,7 +1038,6 @@ def dw_start():
 
 def dw_commit():
     d = st.session_state.dw_data; added = 0
-
     diamond_step = sanitize_step({
         "shape":"diamond","text":d["diamond_text"],"column":d["diamond_col"],
         "connect_from":d["diamond_cf"],"connect_side":"bottom (default)",
@@ -1379,6 +1336,23 @@ h2{font-size:1.05rem}
   border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:13px;color:#1a3d2b}
 .step-ref-banner{background:#FFFBEB;border:1px solid #F6E05E;border-radius:6px;
   padding:6px 12px;font-size:11.5px;color:#744210;margin-bottom:8px}
+
+/* ── Print Format Selector ── */
+.fmt-card{
+  border:2px solid #E2E8F0;border-radius:12px;padding:14px 16px;
+  cursor:pointer;transition:all 0.18s;background:white;text-align:center;
+  user-select:none;
+}
+.fmt-card:hover{border-color:#4299E1;background:#EBF8FF}
+.fmt-card.selected{border-color:#2B6CB0;background:#EBF4FF;box-shadow:0 0 0 3px #BEE3F8}
+.fmt-card .icon{font-size:26px;margin-bottom:4px}
+.fmt-card .label{font-weight:700;font-size:14px;color:#2D3748}
+.fmt-card .sub{font-size:11px;color:#718096;margin-top:2px}
+.fmt-preview-box{
+  border:1.5px dashed #CBD5E0;border-radius:8px;background:#F7FAFC;
+  display:flex;align-items:center;justify-content:center;
+  transition:all 0.2s;
+}
 </style>""", unsafe_allow_html=True)
 
 st.title("📋 SOP Builder — Standard Operating Procedure")
@@ -1595,21 +1569,140 @@ with tab3:
             st.session_state.change_records.pop(i); st.rerun()
 
 # ═══════════════════════════════════════════════════════════
-# TAB 4 — DOWNLOAD PDF
+# TAB 4 — DOWNLOAD PDF  (with Print Format Selector)
 # ═══════════════════════════════════════════════════════════
 with tab4:
-    st.subheader("Generate & Download PDF (A3 Landscape)")
+    st.subheader("Generate & Download PDF")
+
     if not st.session_state.steps:
         st.warning("⚠️ Add at least one process step before generating the PDF.")
     else:
-        st.success(f"Ready — **{len(st.session_state.steps)} step(s)** will be included on A3 landscape.")
-        logo_b=st.session_state.get("logo_bytes")
-        meta={k:st.session_state[k] for k in ["company_name","title","sop_no","rev_no","date","page_info",
-            "unit","area","sub_area","zone","owner","purpose","scope","composed_by","change_records"]}
-        meta["logo_bytes"]=logo_b
-        pdf_buf=generate_pdf(st.session_state.steps,meta)
-        st.download_button(label="📥 Download SOP PDF (A3)",data=pdf_buf,
-            file_name="SOP_Document_A3.pdf",mime="application/pdf",use_container_width=True)
+        # ── FORMAT SELECTOR CARD ─────────────────────────────────────────────
+        st.markdown("""
+        <div style="background:#F7FAFC;border:1.5px solid #E2E8F0;border-radius:14px;
+             padding:20px 24px;margin-bottom:18px">
+          <div style="font-weight:700;font-size:16px;color:#2D3748;margin-bottom:4px">
+            🖨️ Choose Print Format
+          </div>
+          <div style="font-size:12px;color:#718096;margin-bottom:16px">
+            Select page size and orientation before downloading
+          </div>
+        """, unsafe_allow_html=True)
+
+        # Row 1 — Page Size
+        st.markdown("**📐 Page Size**")
+        size_cols = st.columns(2)
+
+        PAGE_SIZES = {
+            "A3": {"icon": "📄", "label": "A3", "sub": "420 × 297 mm  |  Recommended for complex flows"},
+            "A4": {"icon": "📋", "label": "A4", "sub": "297 × 210 mm  |  Standard office / printer size"},
+        }
+        for i, (sz, info) in enumerate(PAGE_SIZES.items()):
+            selected = st.session_state.pdf_page_size == sz
+            border = "#2B6CB0" if selected else "#E2E8F0"
+            bg     = "#EBF4FF" if selected else "white"
+            check  = "✅ " if selected else ""
+            with size_cols[i]:
+                st.markdown(f"""
+                <div style="border:2px solid {border};border-radius:10px;padding:14px;
+                     background:{bg};text-align:center;margin-bottom:4px">
+                  <div style="font-size:28px">{info['icon']}</div>
+                  <div style="font-weight:700;font-size:15px;color:#2D3748">{check}{info['label']}</div>
+                  <div style="font-size:11px;color:#718096;margin-top:3px">{info['sub']}</div>
+                </div>""", unsafe_allow_html=True)
+                if st.button(f"{'☑ Selected' if selected else 'Select'} {sz}",
+                             key=f"sz_{sz}",
+                             type="primary" if selected else "secondary",
+                             use_container_width=True):
+                    st.session_state.pdf_page_size = sz; st.rerun()
+
+        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
+
+        # Row 2 — Orientation
+        st.markdown("**🔄 Orientation**")
+        orient_cols = st.columns(2)
+
+        ORIENTATIONS = {
+            "Landscape": {"icon": "🖼️", "label": "Landscape", "sub": "Wide format — best for flowcharts", "w": 120, "h": 85},
+            "Portrait":  {"icon": "📰", "label": "Portrait",  "sub": "Tall format — good for short flows",  "w": 85,  "h": 120},
+        }
+        for i, (ori, info) in enumerate(ORIENTATIONS.items()):
+            selected = st.session_state.pdf_orientation == ori
+            border = "#2B6CB0" if selected else "#E2E8F0"
+            bg     = "#EBF4FF" if selected else "white"
+            check  = "✅ " if selected else ""
+            # Mini page preview SVG
+            pw, ph = info["w"], info["h"]
+            svg_preview = f"""<svg width="{pw}" height="{ph}" viewBox="0 0 {pw} {ph}">
+              <rect x="0" y="0" width="{pw}" height="{ph}" rx="4" fill="{'#BEE3F8' if selected else '#EDF2F7'}" stroke="{'#2B6CB0' if selected else '#CBD5E0'}" stroke-width="2"/>
+              <rect x="6" y="6" width="{pw-12}" height="10" rx="2" fill="{'#2B6CB0' if selected else '#A0AEC0'}"/>
+              <rect x="6" y="20" width="{(pw-12)*0.6}" height="5" rx="1" fill="{'#63B3ED' if selected else '#CBD5E0'}"/>
+              <rect x="6" y="28" width="{pw-12}" height="{ph-50}" rx="2" fill="white" stroke="{'#90CDF4' if selected else '#E2E8F0'}" stroke-width="1"/>
+              <line x1="12" y1="38" x2="{pw//2}" y2="38" stroke="{'#90CDF4' if selected else '#E2E8F0'}" stroke-width="1.5"/>
+              <line x1="12" y1="44" x2="{pw-12}" y2="44" stroke="{'#90CDF4' if selected else '#E2E8F0'}" stroke-width="1.5"/>
+              <line x1="12" y1="50" x2="{pw*0.7:.0f}" y2="50" stroke="{'#90CDF4' if selected else '#E2E8F0'}" stroke-width="1.5"/>
+            </svg>"""
+            with orient_cols[i]:
+                st.markdown(f"""
+                <div style="border:2px solid {border};border-radius:10px;padding:14px;
+                     background:{bg};text-align:center;margin-bottom:4px">
+                  {svg_preview}
+                  <div style="font-weight:700;font-size:15px;color:#2D3748;margin-top:8px">{check}{info['label']}</div>
+                  <div style="font-size:11px;color:#718096;margin-top:3px">{info['sub']}</div>
+                </div>""", unsafe_allow_html=True)
+                if st.button(f"{'☑ Selected' if selected else 'Select'} {ori}",
+                             key=f"ori_{ori}",
+                             type="primary" if selected else "secondary",
+                             use_container_width=True):
+                    st.session_state.pdf_orientation = ori; st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)  # close format card
+
+        # ── SELECTED FORMAT SUMMARY ──────────────────────────────────────────
+        sel_size = st.session_state.pdf_page_size
+        sel_ori  = st.session_state.pdf_orientation
+        size_dims = {"A3": ("420×297mm","297×420mm"), "A4": ("297×210mm","210×297mm")}
+        dims = size_dims[sel_size][0] if sel_ori=="Landscape" else size_dims[sel_size][1]
+
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#EBF4FF,#F0FFF4);border:1.5px solid #2B6CB0;
+             border-radius:10px;padding:12px 18px;margin:0 0 16px 0;display:flex;
+             align-items:center;gap:14px">
+          <span style="font-size:28px">{'🖼️' if sel_ori=='Landscape' else '📰'}</span>
+          <div>
+            <div style="font-weight:700;font-size:15px;color:#1A365D">
+              {sel_size} {sel_ori} &nbsp;·&nbsp; {dims}
+            </div>
+            <div style="font-size:12px;color:#2B6CB0;margin-top:2px">
+              {len(st.session_state.steps)} step(s) will be included
+            </div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # ── GENERATE & DOWNLOAD ──────────────────────────────────────────────
+        logo_b = st.session_state.get("logo_bytes")
+        meta = {k: st.session_state[k] for k in [
+            "company_name","title","sop_no","rev_no","date","page_info",
+            "unit","area","sub_area","zone","owner","purpose","scope",
+            "composed_by","change_records"]}
+        meta["logo_bytes"] = logo_b
+
+        pdf_buf = generate_pdf(
+            st.session_state.steps, meta,
+            page_size=sel_size,
+            orientation=sel_ori
+        )
+        fname = f"SOP_{sel_size}_{sel_ori}.pdf"
+
+        st.download_button(
+            label=f"📥 Download SOP PDF  ({sel_size} {sel_ori})",
+            data=pdf_buf,
+            file_name=fname,
+            mime="application/pdf",
+            use_container_width=True,
+            type="primary",
+        )
+
         st.divider()
         st.subheader("Step Summary")
         rev_map={v:k for k,v in SHAPE_TYPES.items()}
